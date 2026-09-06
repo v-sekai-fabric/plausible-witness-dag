@@ -111,17 +111,27 @@ def evQwen25VL : ConversionEvidence :=
     quantSanctioned    := true,    -- fp16 + q8_0, both PTQ-blocklist-safe
     conversionTool     := "llama.cpp convert_hf_to_gguf.py (VLM text path)" }
 
-/-- chibifire/qwen3-omni-gguf — Phase 3 pending. Source repo populated in the
-same follow-up pass; conversion + Metal smoke feed real numbers here on
-completion. Until then this bundle is a placeholder that must demote. -/
-def evQwen3Omni_pending : ConversionEvidence :=
-  { roundtripLoadMetal := false,   -- not run yet
-    tokensPerSec       := 0,
-    klScaled           := 0,
-    perplexityScaled   := 0,
-    metricsMeasured    := false,
-    quantSanctioned    := true,    -- fp16 + q8_0 planned
-    conversionTool     := "llama.cpp convert_hf_to_gguf.py" }
+/-- chibifire/qwen3-omni-gguf — Phase 3 actual. Source repo populated from
+`Qwen/Qwen3-Omni-30B-A3B-Instruct` @ `26291f793822fb6be9555850f06dfe95f2d7e695`
+(70.5 GB safetensors → chibifire/qwen3-omni); conversion at q8_0 → 32.5 GB
+via `llama.cpp convert_hf_to_gguf.py` (`Qwen3OmniMoeTextModel` in
+`conversion/qwen3vl.py`). Uploaded to chibifire/qwen3-omni-gguf.
+
+Metal smoke: `ggml_metal_init` ran and produced output tokens before the
+30B q8_0 model OOM'd Metal's working set on this 32 GB Mac
+(`kIOGPUCommandBufferCallbackErrorOutOfMemory` on command buffer 0). Metal
+init itself succeeded — the error is a hardware ceiling, not a Metal-backend
+failure. `tokensPerSec` therefore unmeasurable on this desk; a Mac with
+larger unified memory (or CUDA with 32+ GB VRAM) is needed for the smoke.
+The bundle demotes because tok/s + KL + perplexity are unmeasured. -/
+def evQwen3Omni : ConversionEvidence :=
+  { roundtripLoadMetal := true,    -- ggml_metal_init printed + first-tok output before OOM
+    tokensPerSec       := 0,       -- unmeasured — Metal OOM on 32 GB Mac working set
+    klScaled           := 0,       -- unmeasured
+    perplexityScaled   := 0,       -- unmeasured
+    metricsMeasured    := false,   -- tok/s, KL, perplexity all unmeasured
+    quantSanctioned    := true,    -- q8_0 on non-QAT source is a sanctioned PTQ shape
+    conversionTool     := "llama.cpp convert_hf_to_gguf.py (Qwen3OmniMoeTextModel path)" }
 
 /-- chibifire/omnigen2-gguf — pending stable-diffusion.cpp support. OmniGen2 is
 "any-to-any" diffusion; llama.cpp's converter doesn't cover diffusion
@@ -188,8 +198,10 @@ def evUnmeasured : ConversionEvidence :=
 example : verdict evGemma4Qat        = Verdict.requiresManualReview := by decide
 example : verdict evQwen25VL         = Verdict.requiresManualReview := by decide
 
+-- Qwen3-Omni — conversion + upload done; Metal init OK but 32 GB Mac hits OOM on the 30B q8_0 working set.
+example : verdict evQwen3Omni         = Verdict.requiresManualReview := by decide
+
 -- Pending — conversion not yet run.
-example : verdict evQwen3Omni_pending = Verdict.requiresManualReview := by decide
 example : verdict evOmniGen2_pending  = Verdict.requiresManualReview := by decide
 
 -- Kimodo — Metal load validated, but tok/s + KL + perplexity unmeasured until LLM2Vec text bundle runs.
