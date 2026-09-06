@@ -136,6 +136,22 @@ def evOmniGen2_pending : ConversionEvidence :=
     quantSanctioned    := true,    -- fp16 only planned (diffusion)
     conversionTool     := "stable-diffusion.cpp (pending arch support)" }
 
+/-- chibifire/Kimodo-SOMA-RP-v1.1-gguf — Kimodo motion transformer, converted
+via `localai-org/kimodo.cpp` (fork `v-sekai-fabric/kimodo.cpp`) at F32.
+`kmd-inspect` (Metal-linked build, otool -L shows libggml-metal.0.dylib)
+validated the GGUF loads and gguf_get_n_tensors == 414. Full text→motion
+generation smoke deferred: requires the LLM2Vec text bundle
+(`LocalAI-io/Llama-3-Kimodo-GGML`, ~2 GB). Until that runs, tok/s is
+unmeasured and the bundle demotes to `requiresManualReview`. -/
+def evKimodoSOMA : ConversionEvidence :=
+  { roundtripLoadMetal := true,    -- kmd-inspect load + gguf_get_n_tensors validated on Metal build
+    tokensPerSec       := 0,       -- not measured — needs text bundle for kmd-generate
+    klScaled           := 0,
+    perplexityScaled   := 0,
+    metricsMeasured    := false,   -- tok/s, KL, perplexity all unmeasured
+    quantSanctioned    := true,    -- F32 is the safest possible (no PTQ)
+    conversionTool     := "kimodo.cpp scripts/convert_motion_to_gguf.py (ggml @ 8c63e709)" }
+
 /-- Negative control: a conversion that failed Metal init must NOT ship,
 even with fabricated perfect metrics.
 Doctrine: "a check that passes on known-broken input is decoration." -/
@@ -175,6 +191,9 @@ example : verdict evQwen25VL         = Verdict.requiresManualReview := by decide
 -- Pending — conversion not yet run.
 example : verdict evQwen3Omni_pending = Verdict.requiresManualReview := by decide
 example : verdict evOmniGen2_pending  = Verdict.requiresManualReview := by decide
+
+-- Kimodo — Metal load validated, but tok/s + KL + perplexity unmeasured until LLM2Vec text bundle runs.
+example : verdict evKimodoSOMA       = Verdict.requiresManualReview := by decide
 
 -- Negative controls.
 example : verdict evNoMetal          = Verdict.requiresManualReview := by decide
