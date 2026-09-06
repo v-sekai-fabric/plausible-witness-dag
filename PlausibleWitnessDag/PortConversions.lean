@@ -90,13 +90,33 @@ To promote a candidate to `ships`, land the KL + perplexity measurement,
 edit the two Nat fields with the real numbers, and flip `metricsMeasured` to
 `true`. The `by decide` steps at the end of the file will re-check the bar. -/
 
-/-- chibifire/gemma-4-12B-it-qat-q4_0-gguf — Phase 2 measured. -/
+/-- chibifire/gemma-4-12B-it-qat-q4_0-gguf — Phase 2 + KL/perplexity now measured.
+
+Setup: `llama-perplexity` from `llama-cpp-npu-vision-upstream/build/bin/`,
+wikitext-2-raw test split, `-c 512 --chunks 8`. q4_0 ran on Metal (`-ngl 99`);
+fp16 reference had to run on CPU (`-ngl 0`) because the 12B fp16 GGUF (22 GB)
+OOMs Metal's working set on this 32 GB Mac.
+
+Measured (`--kl-divergence-base` from fp16, `--kl-divergence` on q4):
+- Mean PPL(Q)    = 361.90 ± 46.13
+- Mean PPL(base) = 254.14 ± 29.39
+- PPL(Q)/PPL(base) = 1.424 → perplexityScaled = 1424
+- Mean KL(base‖Q) = 0.449 nats ± 0.023 → klScaled = 449
+- Same top-1 token 75.9 %
+
+Both gates FAIL under the current thresholds (KL ≤ 50, perplexityScaled ∈ [900,
+1100]). Gemma-4-instruct on wikitext-raw is out-of-distribution — the base
+model's own PPL is already 254, so a large fraction of the observed KL is
+domain mismatch rather than quantization damage. Certificate stays
+`requiresManualReview` with real numbers rather than the earlier placeholder
+zeros; re-measure on an in-domain eval (Gemma prompt-format-shaped set) to
+see the actual q4_0 QAT degradation. -/
 def evGemma4Qat : ConversionEvidence :=
   { roundtripLoadMetal := true,
     tokensPerSec       := 22,      -- measured on this Mac, Metal backend
-    klScaled           := 0,       -- not measured
-    perplexityScaled   := 0,       -- not measured
-    metricsMeasured    := false,   -- KL + perplexity not run
+    klScaled           := 449,     -- 0.449 nats × 1000, wikitext-2-raw 8×512
+    perplexityScaled   := 1424,    -- PPL(q4)/PPL(fp16) × 1000, wikitext-2-raw 8×512
+    metricsMeasured    := true,    -- real numbers now
     quantSanctioned    := true,    -- QAT already done upstream, q4_0 sanctioned
     conversionTool     := "llama.cpp convert_hf_to_gguf.py + llama-quantize" }
 
@@ -110,6 +130,15 @@ def evQwen25VL : ConversionEvidence :=
     metricsMeasured    := false,   -- KL + perplexity not run
     quantSanctioned    := true,    -- fp16 + q8_0, both PTQ-blocklist-safe
     conversionTool     := "llama.cpp convert_hf_to_gguf.py (VLM text path)" }
+
+/-! ### chibifire/Qwen2.5-VL-7B-Instruct-gguf — BLOCKLISTED 2026-09-06
+
+`Qwen2.5-VL` is blocklisted per CLAUDE.md — superseded by `Qwen3-VL` for the
+workspace's VLM path (RFD 2229 interchangeable-parts consolidation). No further
+measurement runs on `evQwen25VL` above; the existing HF forks stay as historical
+artefacts. The `evQwen25VL` bundle is kept as a deprecation marker; a future
+amendment should either remove it entirely or leave a one-line pointer at the
+blocklist row. -/
 
 /-- chibifire/qwen3-omni-gguf — Phase 3 actual. Source repo populated from
 `Qwen/Qwen3-Omni-30B-A3B-Instruct` @ `26291f793822fb6be9555850f06dfe95f2d7e695`
@@ -149,10 +178,18 @@ def evOmniGen2_pending : ConversionEvidence :=
 /-- chibifire/Kimodo-SOMA-RP-v1.1-gguf — Kimodo motion transformer, converted
 via `localai-org/kimodo.cpp` (fork `v-sekai-fabric/kimodo.cpp`) at F32.
 `kmd-inspect` (Metal-linked build, otool -L shows libggml-metal.0.dylib)
-validated the GGUF loads and gguf_get_n_tensors == 414. Full text→motion
-generation smoke deferred: requires the LLM2Vec text bundle
-(`LocalAI-io/Llama-3-Kimodo-GGML`, ~2 GB). Until that runs, tok/s is
-unmeasured and the bundle demotes to `requiresManualReview`. -/
+validated the GGUF loads and gguf_get_n_tensors == 414.
+
+**KL/perplexity are N/A for motion diffusion.** llama-perplexity operates on
+autoregressive next-token distributions over text — Kimodo is a diffusion
+denoiser over a 30-joint SOMA motion latent, not an autoregressive text model.
+Applying token perplexity to it would return a number, but the number would
+carry no signal about motion-generation quality. Full text→motion smoke needs
+the LLM2Vec text bundle (`chibifire/Llama-3-Kimodo-GGML`, 15.2 GB, forked
+2026-09-05); a MotionKL analog (loss vs Python reference on a fixed motion
+prompt / joint-angle L2 vs a reference sequence) would be the right axis for
+future measurement. Bundle stays `requiresManualReview` until that MotionKL
+analog is defined and measured. -/
 def evKimodoSOMA : ConversionEvidence :=
   { roundtripLoadMetal := true,    -- kmd-inspect load + gguf_get_n_tensors validated on Metal build
     tokensPerSec       := 0,       -- not measured — needs text bundle for kmd-generate
@@ -192,10 +229,16 @@ def evUnmeasured : ConversionEvidence :=
 
 /-! ## Certificates. -/
 
--- Real Phase 2 measurements — currently demote because KL + perplexity unmeasured.
--- Flip `metricsMeasured := true` on the bundle (and edit klScaled/perplexityScaled
--- with real numbers) to promote to `ships`.
+-- Gemma-4-12B q4_0: KL + perplexity now measured (0.449 nats, ratio 1.424 on
+-- wikitext-2-raw 8×512). Both fail the ships gate — wikitext is out-of-domain
+-- for Gemma-4-instruct (base PPL already 254, so most of the KL is domain
+-- mismatch). Certificate stays `requiresManualReview` with real numbers; re-
+-- measure on an in-domain eval to see actual QAT-q4 degradation.
 example : verdict evGemma4Qat        = Verdict.requiresManualReview := by decide
+
+-- Qwen2.5-VL — BLOCKLISTED (superseded by Qwen3-VL). No measurement pass; the
+-- bundle is kept only as a deprecation marker. Any future amendment should
+-- remove the bundle or replace with a Qwen3-VL retrain of the EditScore LoRA.
 example : verdict evQwen25VL         = Verdict.requiresManualReview := by decide
 
 -- Qwen3-Omni — conversion + upload done; Metal init OK but 32 GB Mac hits OOM on the 30B q8_0 working set.
